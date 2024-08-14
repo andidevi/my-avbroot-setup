@@ -78,6 +78,7 @@ def patch_ota(
         '--key-avb', key_avb,
         '--key-ota', key_ota,
         '--cert-ota', cert_ota,
+        '--clear-vbmeta-flags',
         '--rootless',
     ]
 
@@ -734,6 +735,52 @@ def inject_alterinstaller(
     )
 
 
+def inject_fdroid(
+    module_zip: Path,
+    module_sig: Path,
+    entries: list,
+    tree: Path,
+    contexts: Contexts,
+):
+    # FIXME add PGP signature verification
+    #verify_ssh_sig(module_zip, module_sig, SSH_PUBLIC_KEY_CHENXIAOLONG)
+
+    status(f'Injecting FDroid: {module_zip}')
+
+    with zipfile.ZipFile(module_zip, 'r') as z:
+        etc = 'system/etc/permissions/permissions_org.fdroid.fdroid.privileged.xml'
+        apk = 'system/app/F-Droid/F-Droid.apk'
+        priv = 'system/priv-app/F-DroidPrivilegedExtension/F-DroidPrivilegedExtension.apk'
+
+        # Add to filesystem entries.
+        add_file_entry(entries, contexts, f'/{etc}', 0o644)
+        add_file_entry(entries, contexts, f'/{apk}', 0o644)
+        add_file_entry(entries, contexts, f'/{priv}', 0o644)
+
+        # Extract file contents.
+        tree_etc = tree / etc
+        tree_apk = tree / apk
+        tree_priv = tree / priv
+        tree_etc.parent.mkdir(parents=True, exist_ok=True)
+        tree_apk.parent.mkdir(parents=True, exist_ok=True)
+        tree_priv.parent.mkdir(parents=True, exist_ok=True)
+        zip_extract(
+            z,
+            'permissions_org.fdroid.fdroid.privileged.xml',
+            tree_etc
+        )
+        zip_extract(
+            z,
+            'F-Droid.apk',
+            tree_apk
+        )
+        zip_extract(
+            z,
+            'F-DroidPrivilegedExtension.apk',
+            tree_priv
+        )
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -747,18 +794,18 @@ def parse_args():
         type=Path,
         help='Output OTA',
     )
-    parser.add_argument(
-        '--verify-public-key-avb',
-        type=Path,
-        required=True,
-        help='AVB public key for verifying input OTA',
-    )
-    parser.add_argument(
-        '--verify-cert-ota',
-        type=Path,
-        required=True,
-        help='OTA certificate for verifying input OTA',
-    )
+    #parser.add_argument(
+    #    '--verify-public-key-avb',
+    #    type=Path,
+    #    required=True,
+    #    help='AVB public key for verifying input OTA',
+    #)
+    #parser.add_argument(
+    #    '--verify-cert-ota',
+    #    type=Path,
+    #    required=True,
+    #    help='OTA certificate for verifying input OTA',
+    #)
     parser.add_argument(
         '--sign-key-avb',
         type=Path,
@@ -777,39 +824,39 @@ def parse_args():
         required=True,
         help='OTA certificate for signing output OTA',
     )
-    parser.add_argument(
-        '--module-custota',
-        type=Path,
-        required=True,
-        help='Custota module zip',
-    )
-    parser.add_argument(
-        '--module-custota-sig',
-        type=Path,
-        help='Custota module zip signature',
-    )
-    parser.add_argument(
-        '--module-msd',
-        type=Path,
-        required=True,
-        help='MSD module zip',
-    )
-    parser.add_argument(
-        '--module-msd-sig',
-        type=Path,
-        help='MSD module zip signature',
-    )
-    parser.add_argument(
-        '--module-bcr',
-        type=Path,
-        required=True,
-        help='BCR module zip',
-    )
-    parser.add_argument(
-        '--module-bcr-sig',
-        type=Path,
-        help='BCR module zip signature',
-    )
+    #parser.add_argument(
+    #    '--module-custota',
+    #    type=Path,
+    #    required=True,
+    #    help='Custota module zip',
+    #)
+    #parser.add_argument(
+    #    '--module-custota-sig',
+    #    type=Path,
+    #    help='Custota module zip signature',
+    #)
+    #parser.add_argument(
+    #    '--module-msd',
+    #    type=Path,
+    #    required=True,
+    #    help='MSD module zip',
+    #)
+    #parser.add_argument(
+    #    '--module-msd-sig',
+    #    type=Path,
+    #    help='MSD module zip signature',
+    #)
+    #parser.add_argument(
+    #    '--module-bcr',
+    #    type=Path,
+    #    required=True,
+    #    help='BCR module zip',
+    #)
+    #parser.add_argument(
+    #    '--module-bcr-sig',
+    #    type=Path,
+    #    help='BCR module zip signature',
+    #)
     parser.add_argument(
         '--module-oemunlockonboot',
         type=Path,
@@ -821,16 +868,27 @@ def parse_args():
         type=Path,
         help='OEMUnlockOnBoot module zip signature',
     )
+    #parser.add_argument(
+    #    '--module-alterinstaller',
+    #    type=Path,
+    #    required=True,
+    #    help='AlterInstaller module zip',
+    #)
+    #parser.add_argument(
+    #    '--module-alterinstaller-sig',
+    #    type=Path,
+    #    help='AlterInstaller module zip signature',
+    #)
     parser.add_argument(
-        '--module-alterinstaller',
+        '--module-fdroid',
         type=Path,
         required=True,
-        help='AlterInstaller module zip',
+        help='F-Droid Privileged Extension OTA zip',
     )
     parser.add_argument(
-        '--module-alterinstaller-sig',
+        '--module-fdroid-sig',
         type=Path,
-        help='AlterInstaller module zip signature',
+        help='F-Droid Privileged Extension OTA zip PGP signature',
     )
     parser.add_argument(
         '--debug-shell',
@@ -842,18 +900,20 @@ def parse_args():
 
     if args.output is None:
         args.output = Path(f'{args.input}.patched')
-    if args.module_custota_sig is None:
-        args.module_custota_sig = Path(f'{args.module_custota}.sig')
-    if args.module_msd_sig is None:
-        args.module_msd_sig = Path(f'{args.module_msd}.sig')
-    if args.module_bcr_sig is None:
-        args.module_bcr_sig = Path(f'{args.module_bcr}.sig')
+    #if args.module_custota_sig is None:
+    #    args.module_custota_sig = Path(f'{args.module_custota}.sig')
+    #if args.module_msd_sig is None:
+    #    args.module_msd_sig = Path(f'{args.module_msd}.sig')
+    #if args.module_bcr_sig is None:
+    #    args.module_bcr_sig = Path(f'{args.module_bcr}.sig')
     if args.module_oemunlockonboot_sig is None:
         args.module_oemunlockonboot_sig = \
             Path(f'{args.module_oemunlockonboot}.sig')
-    if args.module_alterinstaller_sig is None:
-        args.module_alterinstaller_sig = \
-            Path(f'{args.module_alterinstaller}.sig')
+    #if args.module_alterinstaller_sig is None:
+    #    args.module_alterinstaller_sig = \
+    #        Path(f'{args.module_alterinstaller}.sig')
+    if args.module_fdroid_sig is None:
+        args.module_fdroid_sig = Path(f'{args.module_fdroid}.asc')
 
     return args
 
@@ -879,7 +939,8 @@ def run(args: argparse.Namespace, temp_dir: Path):
     vendor_boot_tree = vendor_boot_dir / 'cpio_tree'
 
     # Verify OTA.
-    verify_ota(args.input, args.verify_public_key_avb, args.verify_cert_ota)
+    # FIXME integrate LOS verify
+    #verify_ota(args.input, args.verify_public_key_avb, args.verify_cert_ota)
 
     # Unpack OTA.
     unpack_ota(args.input, images_dir, True)
@@ -896,9 +957,11 @@ def run(args: argparse.Namespace, temp_dir: Path):
         system_tree / 'system' / 'etc' / 'selinux' / 'plat_file_contexts')
 
     # Unpack vendor image.
+    # Do not - LineageOS for uses EROFS for vendor, not supported by afsr but also no
+    # change needed
     vendor_dir.mkdir()
     unpack_avb(vendor_image, vendor_dir)
-    unpack_fs(vendor_raw, vendor_dir)
+    #unpack_fs(vendor_raw, vendor_dir)
 
     # Unpack vendor_boot image.
     vendor_boot_dir.mkdir()
@@ -916,29 +979,29 @@ def run(args: argparse.Namespace, temp_dir: Path):
     ]
 
     # Inject modules.
-    inject_custota(
-        args.module_custota,
-        args.module_custota_sig,
-        system_fs_info['entries'],
-        system_tree,
-        system_contexts,
-        selinux_policies,
-    )
-    inject_msd(
-        args.module_msd,
-        args.module_msd_sig,
-        system_fs_info['entries'],
-        system_tree,
-        system_contexts,
-        selinux_policies,
-    )
-    inject_bcr(
-        args.module_bcr,
-        args.module_bcr_sig,
-        system_fs_info['entries'],
-        system_tree,
-        system_contexts,
-    )
+    #inject_custota(
+    #    args.module_custota,
+    #    args.module_custota_sig,
+    #    system_fs_info['entries'],
+    #    system_tree,
+    #    system_contexts,
+    #    selinux_policies,
+    #)
+    #inject_msd(
+    #    args.module_msd,
+    #    args.module_msd_sig,
+    #    system_fs_info['entries'],
+    #    system_tree,
+    #    system_contexts,
+    #    selinux_policies,
+    #)
+    #inject_bcr(
+    #    args.module_bcr,
+    #    args.module_bcr_sig,
+    #    system_fs_info['entries'],
+    #    system_tree,
+    #    system_contexts,
+    #)
     inject_oemunlockonboot(
         args.module_oemunlockonboot,
         args.module_oemunlockonboot_sig,
@@ -946,9 +1009,16 @@ def run(args: argparse.Namespace, temp_dir: Path):
         system_tree,
         system_contexts,
     )
-    inject_alterinstaller(
-        args.module_alterinstaller,
-        args.module_alterinstaller_sig,
+    #inject_alterinstaller(
+    #    args.module_alterinstaller,
+    #    args.module_alterinstaller_sig,
+    #    system_fs_info['entries'],
+    #    system_tree,
+    #    system_contexts,
+    #)
+    inject_fdroid(
+        args.module_fdroid,
+        args.module_fdroid_sig,
         system_fs_info['entries'],
         system_tree,
         system_contexts,
@@ -961,7 +1031,8 @@ def run(args: argparse.Namespace, temp_dir: Path):
     pack_avb(system_image, system_dir, args.sign_key_avb, True)
 
     # Repack vendor image.
-    pack_fs(vendor_raw, vendor_dir)
+    # Do not touch vendor_raw for LOS
+    #pack_fs(vendor_raw, vendor_dir)
     pack_avb(vendor_image, vendor_dir, args.sign_key_avb, True)
 
     # Repack vendor_boot image.
@@ -983,19 +1054,19 @@ def run(args: argparse.Namespace, temp_dir: Path):
         },
     )
 
-    # Generate Custota csig.
-    generate_csig(args.output, args.sign_key_ota, args.sign_cert_ota)
-
-    # Generate Custota update-info.
-    codename = get_ota_metadata(args.output)['pre-device']
-    update_info = args.output.parent / f'{codename}.json'
-    generate_update_info(update_info, args.output.name)
+    ## Generate Custota csig.
+    #generate_csig(args.output, args.sign_key_ota, args.sign_cert_ota)
+    #
+    ## Generate Custota update-info.
+    #codename = get_ota_metadata(args.output)['pre-device']
+    #update_info = args.output.parent / f'{codename}.json'
+    #generate_update_info(update_info, args.output.name)
 
 
 def main():
     args = parse_args()
 
-    with tempfile.TemporaryDirectory() as temp_dir:
+    with tempfile.TemporaryDirectory(None, None, '.') as temp_dir:
         try:
             run(args, Path(temp_dir))
         finally:

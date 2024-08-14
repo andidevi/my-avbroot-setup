@@ -1,0 +1,1 @@
+../my-avbroot-setup/patch.py --input ../lineage-21.0-20240811-nightly-pdx234-signed.zip --sign-key-avb `pwd`/avb.key --sign-key-ota `pwd`/ota.key --sign-cert-ota`pwd`/ota.crt --module-oemunlockonboot ../OEMUnlockOnBoot-1.1-release.zip --module-fdroid ../org.fdroid.fdroid.privileged.ota_2130.zip --debug-shell

@@ -1,3 +1,11 @@
+# Changes [for LOS]
+
+* disabled all modules but OEMUnlockOnBoot
+* added support for F-Droid
+* don't touch vendor.img (implies no changes to selinux policies which would be need by some of the disabled modules)
+* clear avb flags as LOS is built without support for avb
+* use . as base for temp dir
+
 # My avbroot setup
 
 This repo describes my personal setup for modifying the OS on my Android devices.
