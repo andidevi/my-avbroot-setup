@@ -763,6 +763,29 @@ def inject_media(
             tree_path.parent.mkdir(parents=True, exist_ok=True)
             zip_extract(z, path, tree_path)
 
+def inject_system_inject(
+    module_zip: Path,
+    entries: list,
+    tree: Path,
+    contexts: Contexts,
+):
+    status(f'Injecting media: {module_zip}')
+
+    target = 'system'
+    with zipfile.ZipFile(module_zip, 'r') as z:
+        for path in z.namelist():
+            if zipfile.Path(z, at= path).is_dir():
+                continue
+
+            # Add to filesystem entries.
+            f = target + '/' + path
+            add_file_entry(entries, contexts, f'/{f}', 0o644)
+
+            # Extract file contents.
+            tree_path = tree / f
+            tree_path.parent.mkdir(parents=True, exist_ok=True)
+            zip_extract(z, path, tree_path)
+
 
 def inject_fdroid(
     module_zip: Path,
@@ -925,6 +948,11 @@ def parse_args():
         help='media zip',
     )
     parser.add_argument(
+        '--zip-system-inject',
+        type=Path,
+        help='zip file to inject into /system'
+    )
+    parser.add_argument(
         '--debug-shell',
         action='store_true',
         help='Spawn a debug shell before cleaning up temporary directory',
@@ -1060,6 +1088,13 @@ def run(args: argparse.Namespace, temp_dir: Path):
     if not args.zip_media is None:
         inject_media(
             args.zip_media,
+            system_fs_info['entries'],
+            system_tree,
+            system_contexts,
+        )
+    if not args.zip_system_inject is None:
+        inject_system_inject(
+            args.zip_system_inject,
             system_fs_info['entries'],
             system_tree,
             system_contexts,
