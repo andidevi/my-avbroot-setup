@@ -67,6 +67,8 @@ def patch_ota(
     key_ota: Path,
     cert_ota: Path,
     replace: dict[str, Path],
+    magisk: Path,
+    magiskPreinitDevice: Path,
 ):
     image_names = ', '.join(sorted(replace.keys()))
     status(f'Patching OTA with replaced images: {image_names}: {output_ota}')
@@ -79,8 +81,17 @@ def patch_ota(
         '--key-ota', key_ota,
         '--cert-ota', cert_ota,
         '--clear-vbmeta-flags',
-        '--rootless',
     ]
+
+    if magisk is None or magiskPreinitDevice is None:
+        status(f'rootless. for root supply --magisk and --magisk-preinit-device')
+        cmd.append('--rootless')
+    else:
+        status(f'adding magisk {magisk} for preinit device {magiskPreinitDevice}');
+        cmd.append('--magisk')
+        cmd.append(magisk)
+        cmd.append('--magisk-preinit-device')
+        cmd.append(magiskPreinitDevice)
 
     for k, v in replace.items():
         cmd.append('--replace')
@@ -953,6 +964,17 @@ def parse_args():
         help='zip file to inject into /system'
     )
     parser.add_argument(
+        '--magisk',
+        type=Path,
+        help='To enable root access supply path to Magisk apk',
+    )
+    parser.add_argument(
+        '--magisk-preinit-device',
+        type=Path,
+        help='To enable root access supply Magisk preinit partition name'
+    )
+
+    parser.add_argument(
         '--debug-shell',
         action='store_true',
         help='Spawn a debug shell before cleaning up temporary directory',
@@ -1128,6 +1150,8 @@ def run(args: argparse.Namespace, temp_dir: Path):
             'vendor': vendor_image,
             'vendor_boot': vendor_boot_image,
         },
+        args.magisk,
+        args.magisk_preinit_device,
     )
 
     ## Generate Custota csig.

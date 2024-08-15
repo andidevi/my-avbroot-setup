@@ -1,8 +1,9 @@
 # Changes [for LOS]
 
 * disabled all modules but OEMUnlockOnBoot
+* don't touch vendor.img (implies no changes to selinux policies which would be needed by some of the disabled modules)
 * added support for F-Droid, a media zip for wallpapers or a zip to inject into system/
-* don't touch vendor.img (implies no changes to selinux policies which would be need by some of the disabled modules)
+* magisk
 * clear avb flags as LOS is built without support for avb
 * use . as base for temp dir
 
