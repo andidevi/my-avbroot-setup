@@ -780,7 +780,7 @@ def inject_system_inject(
     tree: Path,
     contexts: Contexts,
 ):
-    status(f'Injecting media: {module_zip}')
+    status(f'Injecting into system: {module_zip}')
 
     target = 'system'
     with zipfile.ZipFile(module_zip, 'r') as z:
@@ -796,6 +796,82 @@ def inject_system_inject(
             tree_path = tree / f
             tree_path.parent.mkdir(parents=True, exist_ok=True)
             zip_extract(z, path, tree_path)
+
+
+def inject_unifiednlp(
+    module_apk: Path,
+    entries: list,
+    tree: Path,
+    contexts: Contexts,
+):
+    status(f'Injecting Unified NLP apk: {module_apk}')
+
+    # copy files. built for Android 14 version of Mind The Gapps
+    add_file_entry(entries, contexts,
+        f'/system/etc/permissions/privapp-permissions-unifiednlp.xml',
+        0o644
+    )
+    shutil.copyfile(
+        os.path.join(
+            os.path.dirname(__file__),
+            'privapp-permissions-unifiednlp.xml'
+        ),
+        tree / f'system/etc/permissions/privapp-permissions-unifiednlp.xml'
+    )
+    add_file_entry(entries, contexts,
+        f'/system/priv-app/UnifiedNLP/UnifiedNLP.apk',
+        0o644
+    )
+    os.makedirs(tree / f'system/priv-app/UnifiedNLP')
+    shutil.copyfile(
+        module_apk,
+        tree / f'system/priv-app/UnifiedNLP/UnifiedNLP.apk'
+    )
+
+
+def inject_mtgapps(
+    module_zip: Path,
+    entries: list,
+    tree: Path,
+    contexts: Contexts,
+):
+    status(f'Injecting Mind The Gapps: {module_zip}')
+
+    # copy files. built for Android 14 version of Mind The Gapps
+    target = 'system'
+    with zipfile.ZipFile(module_zip, 'r') as z:
+        for path in z.namelist():
+            if zipfile.Path(z, at= path).is_dir():
+                continue
+            if path.startswith(('system/product', 'system/system_ext')):
+                f = path.replace('system/product/', '', 1)
+                f = f.replace('system/system_ext/', '', 1)
+                if any(s in path for s in (
+					#'GoogleTTS',
+					#'MarkupGoogle',
+					'SpeechServicesByGoogle',
+					'talkback',
+					#'GoogleRestore',
+					'Velvet',
+					'VelvetTitan',
+					'Wellbeing',
+					'SetupWizard ',
+                    'AndroidAutoStub',
+                )):
+                    status(f'... skipping {f}')
+                    continue
+
+                # Add to filesystem entries.
+                f = target + '/' + path
+                add_file_entry(entries, contexts, f'/{f}', 0o644)
+
+                # Extract file contents.
+                tree_path = tree / f
+                tree_path.parent.mkdir(parents=True, exist_ok=True)
+                zip_extract(z, path, tree_path)
+                # FIXME fix the only thing the mtg update_binary does
+                #  if(path.endswith('SetupWizard.apk')):
+                #    remove system_ext/priv-app/Provision
 
 
 def inject_fdroid(
@@ -964,6 +1040,16 @@ def parse_args():
         help='zip file to inject into /system'
     )
     parser.add_argument(
+        '--zip-mtgapps',
+        type=Path,
+        help='zip with Mind The Gapps'
+    )
+    parser.add_argument(
+        '--apk-unifiednlp',
+        type=Path,
+        help='UnifiedNLP (gapps) apk'
+    )
+    parser.add_argument(
         '--magisk',
         type=Path,
         help='To enable root access supply path to Magisk apk',
@@ -1110,6 +1196,20 @@ def run(args: argparse.Namespace, temp_dir: Path):
     if not args.zip_media is None:
         inject_media(
             args.zip_media,
+            system_fs_info['entries'],
+            system_tree,
+            system_contexts,
+        )
+    if not args.zip_mtgapps is None:
+        inject_mtgapps(
+            args.zip_mtgapps,
+            system_fs_info['entries'],
+            system_tree,
+            system_contexts,
+        )
+    if not args.apk_unifiednlp is None:
+        inject_unifiednlp(
+            args.apk_unifiednlp,
             system_fs_info['entries'],
             system_tree,
             system_contexts,
