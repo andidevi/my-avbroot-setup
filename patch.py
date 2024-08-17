@@ -752,6 +752,8 @@ def inject_media(
     contexts: Contexts,
 ):
     status(f'Injecting media: {module_zip}')
+    # FIXME wallpapers are not support yet as the has to be moved to oem
+    # FIXME add oem partition repacking including filesystem_info and entries
 
     with zipfile.ZipFile(module_zip, 'r') as z:
         for path in z.namelist():
@@ -862,7 +864,7 @@ def inject_mtgapps(
                     continue
 
                 # Add to filesystem entries.
-                f = target + '/' + path
+                f = target + '/' + f
                 add_file_entry(entries, contexts, f'/{f}', 0o644)
 
                 # Extract file contents.
