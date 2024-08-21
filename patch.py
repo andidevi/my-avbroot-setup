@@ -67,8 +67,9 @@ def patch_ota(
     key_ota: Path,
     cert_ota: Path,
     replace: dict[str, Path],
-    magisk: Path,
-    magiskPreinitDevice: Path,
+    magisk: Path = None,
+    magiskPreinitDevice: Path = None,
+    prepatched: Path = None
 ):
     image_names = ', '.join(sorted(replace.keys()))
     status(f'Patching OTA with replaced images: {image_names}: {output_ota}')
@@ -83,15 +84,23 @@ def patch_ota(
         '--clear-vbmeta-flags',
     ]
 
-    if magisk is None or magiskPreinitDevice is None:
+    if (
+        (magisk is None or magiskPreinitDevice is None) and
+        prepatched is None
+    ):
         status(f'rootless. for root supply --magisk and --magisk-preinit-device')
         cmd.append('--rootless')
     else:
-        status(f'adding magisk {magisk} for preinit device {magiskPreinitDevice}');
-        cmd.append('--magisk')
-        cmd.append(magisk)
-        cmd.append('--magisk-preinit-device')
-        cmd.append(magiskPreinitDevice)
+        if prepatched is None:
+            status(f'adding magisk {magisk} for preinit device {magiskPreinitDevice}');
+            cmd.append('--magisk')
+            cmd.append(magisk)
+            cmd.append('--magisk-preinit-device')
+            cmd.append(magiskPreinitDevice)
+        else:
+            status(f'adding prepatched boot {prepatched}')
+            cmd.append('--prepatched')
+            cmd.append(prepatched)
 
     for k, v in replace.items():
         cmd.append('--replace')
@@ -167,17 +176,39 @@ def pack_cpio(archive: Path, input_dir: Path):
     ], cwd=input_dir)
 
 
-def unpack_fs(image: Path, output_dir: Path):
-    status(f'Unpacking filesystem: {image}')
+def unpack_fs(image: Path, output_dir: Path, isErofs: bool = False):
+    status(f'Unpacking filesystem: {image} to {output_dir}')
 
-    subprocess.check_call([
-        'afsr', 'unpack',
-        '--input', image.absolute(),
-    ], cwd=output_dir)
+    if isErofs:
+        ## this is missing a real equivalent to entries
+        ## but most erofs only contain files owned by root
+        #target = output_dir / 'fs_tree'
+        #target.mkdir(parents=True, exist_ok=True)
+        #
+        ## as long as we do not have erofs write needs and support
+        ## to keep attributes one could run the script with fakeroot
+        ## subprocess.check_call([
+        ##    'fsck.erofs',
+        ##    '--extract=${output_dir}',
+        ##    image.absolute(),
+        ##], cwd=target)
+        #subprocess.check_call([
+        #    'erofsfuse',
+        #    image.absolute(),
+        #    target,
+        #])
+        # FIXME readonly Erofs is working but write support is need
+        pass
+    else:
+        subprocess.check_call([
+            'afsr', 'unpack',
+            '--input', image.absolute(),
+        ], cwd=output_dir)
 
 
-def pack_fs(image: Path, input_dir: Path):
+def pack_fs(image: Path, input_dir: Path, isErofs = False):
     status(f'Packing filesystem: {image}')
+    # FIXME erofs write support
 
     subprocess.check_call([
         'afsr', 'pack',
@@ -261,6 +292,7 @@ def add_entry(
     path: str,
     file_type: str,
     mode: int,
+    context_path: str = None
 ):
     assert path.startswith('/')
 
@@ -270,7 +302,10 @@ def add_entry(
 
     status(f'Adding {file_type} filesystem entry: {path}')
 
-    label = next(c[1] for c in contexts if c[0].fullmatch(path))
+    if context_path is None:
+        label = next(c[1] for c in contexts if c[0].fullmatch(path))
+    else:
+        label = next(c[1] for c in contexts if c[0].fullmatch(context_path + path))
 
     entries.append({
         'path': path,
@@ -292,15 +327,18 @@ def add_file_entry(
     path: str,
     mode: int,
     create_parents: bool = True,
+    context_path: str = None,
 ):
     if create_parents:
         for parent in PurePosixPath(path).parents:
             try:
-                add_entry(entries, contexts, str(parent), 'Directory', 0o755)
+                add_entry(entries, contexts, str(parent), 'Directory',
+                    0o755, context_path
+                )
             except EntryExists:
                 pass
 
-    add_entry(entries, contexts, path, 'RegularFile', mode)
+    add_entry(entries, contexts, path, 'RegularFile', mode, context_path)
 
 
 @dataclasses.dataclass
@@ -752,14 +790,15 @@ def inject_media(
     contexts: Contexts,
 ):
     status(f'Injecting media: {module_zip}')
-    # FIXME wallpapers are not support yet as the has to be moved to oem
-    # FIXME add oem partition repacking including filesystem_info and entries
 
     with zipfile.ZipFile(module_zip, 'r') as z:
         for path in z.namelist():
             target = ''
             if path.startswith('Wallpaper') and path.endswith('.apk'):
                 target = 'system/app'
+            elif path.startswith('media/wallpaper'):
+                # FIXME no wallpaper support in LOS. needs patching Backgrounds.apk
+                continue
             elif path.startswith('media/') and path.endswith((
                     '.mp3', '.m4a', '.ogg', '.jpg', '.png'
             )):
@@ -805,12 +844,16 @@ def inject_unifiednlp(
     entries: list,
     tree: Path,
     contexts: Contexts,
+    zip_mtgapps,
+    product_entries: list,
+    product_tree: Path,
+    product_contexts: Contexts,
 ):
     status(f'Injecting Unified NLP apk: {module_apk}')
 
     # copy files. built for Android 14 version of Mind The Gapps
     add_file_entry(entries, contexts,
-        f'/system/etc/permissions/privapp-permissions-unifiednlp.xml',
+        '/system/etc/permissions/privapp-permissions-unifiednlp.xml',
         0o644
     )
     shutil.copyfile(
@@ -818,17 +861,30 @@ def inject_unifiednlp(
             os.path.dirname(__file__),
             'privapp-permissions-unifiednlp.xml'
         ),
-        tree / f'system/etc/permissions/privapp-permissions-unifiednlp.xml'
+        tree / 'system/etc/permissions/privapp-permissions-unifiednlp.xml'
     )
     add_file_entry(entries, contexts,
-        f'/system/priv-app/UnifiedNLP/UnifiedNLP.apk',
+        '/system/priv-app/UnifiedNLP/UnifiedNLP.apk',
         0o644
     )
-    os.makedirs(tree / f'system/priv-app/UnifiedNLP')
+    os.makedirs(tree / 'system/priv-app/UnifiedNLP')
     shutil.copyfile(
         module_apk,
         tree / f'system/priv-app/UnifiedNLP/UnifiedNLP.apk'
     )
+    if not zip_mtgapps is None:
+        add_file_entry(product_entries, product_contexts,
+            '/overlay/UnifiedNlpOverlay.apk',
+            0o644, True,
+            '/product'
+        )
+        shutil.copyfile(
+            os.path.join(
+                os.path.dirname(__file__),
+                'UnifiedNlpOverlay.apk'
+            ),
+            product_tree / f'overlay/UnifiedNlpOverlay.apk'
+        )
 
 
 def inject_mtgapps(
@@ -849,16 +905,20 @@ def inject_mtgapps(
                 f = path.replace('system/product/', '', 1)
                 f = f.replace('system/system_ext/', '', 1)
                 if any(s in path for s in (
-					#'GoogleTTS',
-					#'MarkupGoogle',
-					'SpeechServicesByGoogle',
-					'talkback',
-					#'GoogleRestore',
-					'Velvet',
-					'VelvetTitan',
-					'Wellbeing',
-					'SetupWizard ',
+                    #'GoogleTTS',
+                    #'MarkupGoogle',
+                    'SpeechServicesByGoogle',
+                    'talkback',
+                    #'GoogleRestore',
+                    'Velvet',
+                    'VelvetTitan',
+                    'Wellbeing',
+                    'SetupWizard ',
                     'AndroidAutoStub',
+                    'GoogleContactsSyncAdapter',
+                    #'GoogleCalendarSyncAdapter',
+                    'PrebuiltExchange3Google',
+                    'GoogleFeedback',
                 )):
                     status(f'... skipping {f}')
                     continue
@@ -887,6 +947,7 @@ def inject_fdroid(
     #verify_ssh_sig(module_zip, module_sig, SSH_PUBLIC_KEY_CHENXIAOLONG)
 
     status(f'Injecting FDroid: {module_zip}')
+    status(f'This is not necessary for background updates on android > 13')
 
     with zipfile.ZipFile(module_zip, 'r') as z:
         etc = 'system/etc/permissions/permissions_org.fdroid.fdroid.privileged.xml'
@@ -1023,7 +1084,6 @@ def parse_args():
     parser.add_argument(
         '--module-fdroid',
         type=Path,
-        required=True,
         help='F-Droid Privileged Extension OTA zip',
     )
     parser.add_argument(
@@ -1061,7 +1121,16 @@ def parse_args():
         type=Path,
         help='To enable root access supply Magisk preinit partition name'
     )
-
+    parser.add_argument(
+        '--prepatched',
+        type=Path,
+        help='To enable root access supply prepatched image'
+    )
+    parser.add_argument(
+        '--debloat',
+        action='store_true',
+        help='debloat and remove some assets from base image'
+    )
     parser.add_argument(
         '--debug-shell',
         action='store_true',
@@ -1099,6 +1168,13 @@ def run(args: argparse.Namespace, temp_dir: Path):
     system_metadata = system_dir / 'fs_metadata.toml'
     system_tree = system_dir / 'fs_tree'
 
+    product_image = images_dir / 'product.img'
+    product_dir = temp_dir / 'product'
+    product_raw = product_dir / 'raw.img'
+    product_metadata = product_dir / 'fs_metadata.toml'
+    product_tree = product_dir / 'fs_tree'
+    product_dirty = False
+
     vendor_image = images_dir / 'vendor.img'
     vendor_dir = temp_dir / 'vendor'
     vendor_raw = vendor_dir / 'raw.img'
@@ -1128,12 +1204,23 @@ def run(args: argparse.Namespace, temp_dir: Path):
     system_contexts = load_file_contexts(
         system_tree / 'system' / 'etc' / 'selinux' / 'plat_file_contexts')
 
+    # Unpack product image.
+    product_dir.mkdir()
+    unpack_avb(product_image, product_dir)
+    unpack_fs(product_raw, product_dir)
+    with open(product_metadata, 'rb') as f:
+        product_fs_info = tomlkit.load(f)
+
+    # Parse SELinux label mappings for use when creating new entries.
+    product_contexts = system_contexts + load_file_contexts(
+        product_tree / 'etc' / 'selinux' / 'product_file_contexts')
+
     # Unpack vendor image.
     # Do not - LineageOS for uses EROFS for vendor, not supported by afsr but also no
     # change needed
     vendor_dir.mkdir()
     unpack_avb(vendor_image, vendor_dir)
-    #unpack_fs(vendor_raw, vendor_dir)
+    #FIXME unpack_fs(vendor_raw, vendor_dir, True)
 
     # Unpack vendor_boot image.
     vendor_boot_dir.mkdir()
@@ -1149,6 +1236,27 @@ def run(args: argparse.Namespace, temp_dir: Path):
         vendor_tree / 'etc' / 'selinux' / 'precompiled_sepolicy',
         vendor_boot_tree / 'sepolicy',
     ]
+
+    # debloat first, files may be added later again
+    if args.debloat:
+        status('debloat')
+        remove = [
+            'app/Glimpse',
+            'app/Jelly',
+            'app/messaging',
+            'app/Aperture',
+            'app/ApertureLensLauncher',
+            # 'app/ExactCalculator',
+            'priv-app/Contacts',
+            # 'priv-app/Eleven',
+        ]
+        for r in remove:
+            status(f'removing from product {r}')
+            path = f'/{r}'
+            product_fs_info['entries'] = [
+                e for e in product_fs_info['entries'] if not e['path'].startswith(path)
+            ]
+            shutil.rmtree(product_tree / r)
 
     # Inject modules.
     #inject_custota(
@@ -1188,13 +1296,14 @@ def run(args: argparse.Namespace, temp_dir: Path):
     #    system_tree,
     #    system_contexts,
     #)
-    inject_fdroid(
-        args.module_fdroid,
-        args.module_fdroid_sig,
-        system_fs_info['entries'],
-        system_tree,
-        system_contexts,
-    )
+    if not args.module_fdroid is None:
+        inject_fdroid(
+            args.module_fdroid,
+            args.module_fdroid_sig,
+            system_fs_info['entries'],
+            system_tree,
+            system_contexts,
+        )
     if not args.zip_media is None:
         inject_media(
             args.zip_media,
@@ -1215,7 +1324,12 @@ def run(args: argparse.Namespace, temp_dir: Path):
             system_fs_info['entries'],
             system_tree,
             system_contexts,
+            args.zip_mtgapps,
+            product_fs_info['entries'],
+            product_tree,
+            product_contexts,
         )
+        product_dirty = not args.zip_mtgapps is None
     if not args.zip_system_inject is None:
         inject_system_inject(
             args.zip_system_inject,
@@ -1230,15 +1344,30 @@ def run(args: argparse.Namespace, temp_dir: Path):
     pack_fs(system_raw, system_dir)
     pack_avb(system_image, system_dir, args.sign_key_avb, True)
 
+    # Repack product image.
+    if product_dirty:
+        with open(product_metadata, 'w') as f:
+            tomlkit.dump(product_fs_info, f)
+        pack_fs(product_raw, product_dir)
+        pack_avb(product_image, product_dir, args.sign_key_avb, True)
+
     # Repack vendor image.
     # Do not touch vendor_raw for LOS
-    #pack_fs(vendor_raw, vendor_dir)
+    #FIXME pack_fs(vendor_raw, vendor_dir, True)
     pack_avb(vendor_image, vendor_dir, args.sign_key_avb, True)
 
     # Repack vendor_boot image.
     pack_cpio(vendor_boot_ramdisk, vendor_boot_dir)
     pack_boot(vendor_boot_raw, vendor_boot_dir)
     pack_avb(vendor_boot_image, vendor_boot_dir, args.sign_key_avb, False)
+
+    ## umount vendor as long as we don't write ot it, see unpack_fs above
+    #status(f'umount ${vendor_tree}')
+    #subprocess.check_call([
+    #    'umount',
+    #    vendor_tree,
+    #])
+
 
     # Patch OTA.
     patch_ota(
@@ -1249,11 +1378,13 @@ def run(args: argparse.Namespace, temp_dir: Path):
         args.sign_cert_ota,
         {
             'system': system_image,
-            'vendor': vendor_image,
+            #FIXME 'vendor': vendor_image,
             'vendor_boot': vendor_boot_image,
+            'product': product_image,
         },
         args.magisk,
         args.magisk_preinit_device,
+        args.prepatched,
     )
 
     ## Generate Custota csig.

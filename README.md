@@ -4,9 +4,12 @@
 * don't touch vendor.img (implies no changes to selinux policies which would be needed by some of the disabled modules)
 * added support for F-Droid, a media zip for wallpapers or a zip to inject into system/
 * added support for Mind The Gapps and for UnifiedNLP (gapps)
-* pass through magisk parameters
+* pass through magisk parameters including --prepatched
 * clear avb flags as LOS is built without support for avb
 * use . as base for temp dir
+* support UnifiedNLP beside mtGapps, big thanks to github.com/TontyTon
+* enable patching the product partition 
+- EroFS read support (commented out as it helps nothing without write support)
 
 # My avbroot setup
 
