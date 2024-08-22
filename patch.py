@@ -107,6 +107,7 @@ def patch_ota(
         cmd.append(k)
         cmd.append(v)
 
+    status(f'...calling {cmd}');
     subprocess.check_call(cmd)
 
 
@@ -983,6 +984,17 @@ def inject_fdroid(
         )
 
 
+def fix_no_gsi_keys(
+    vendor_boot_tree,
+):
+    subprocess.check_call([
+        'sed',
+        '-i',
+        '-e',
+        's#,avb_keys=/avb/q-gsi.avbpubkey:/avb/r-gsi.avbpubkey:/avb/s-gsi.avbpubkey:/avb/t-gsi.avbpubkey##',
+        vendor_boot_tree / 'first_stage_ramdisk/fstab.qcom'
+    ])
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -1337,6 +1349,8 @@ def run(args: argparse.Namespace, temp_dir: Path):
             system_tree,
             system_contexts,
         )
+
+    fix_no_gsi_keys(vendor_boot_tree)
 
     # Repack system image.
     with open(system_metadata, 'w') as f:
