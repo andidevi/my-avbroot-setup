@@ -9,6 +9,7 @@
 * use . as base for temp dir
 * support UnifiedNLP beside mtGapps, big thanks to github.com/TontyTon
 * enable patching the product partition 
+* fix_no_gsi_keys: remove misleading error message about unused gsi keys
 - EroFS read support (commented out as it helps nothing without write support)
 
 # My avbroot setup
